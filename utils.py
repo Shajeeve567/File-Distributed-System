@@ -4,7 +4,7 @@ import time
 import logging
 from datetime import datetime
 
-# Setup logging first so you can see what's happening
+#Setup logging first so you can see what's happening
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
