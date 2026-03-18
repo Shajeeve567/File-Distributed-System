@@ -12,28 +12,43 @@ storage = StorageManager()
 
 # Create FastAPI app
 app = FastAPI(title=f"Node {config.NODE_ID}")
+BLOCK_SIZE = 1024 * 1024  # 1MB blocks
 
-# Step 1: Health check
+@app.post("/files/{filename}")
+async def upload_file(filename: str, file: UploadFile = File(...)):
+    content = await file.read()
+    
+    # Split into blocks
+    blocks = []
+    for i in range(0, len(content), BLOCK_SIZE):
+        block_data = content[i:i+BLOCK_SIZE]
+        block_id = generate_block_id(filename, i // BLOCK_SIZE)
+        
+        # Save block
+        await storage.write_block(block_id, block_data)
+        
+        blocks.append({
+            "block_id": block_id,
+            "offset": i,
+            "size": len(block_data)
+        })
+    
+    # Save file manifest
+    manifest = {
+        "filename": filename,
+        "total_size": len(content),
+        "blocks": blocks,
+        "created": time.time()
+    }
+    await storage.save_metadata(f"manifest_{filename}", manifest)
+    
+    return manifest
+  
+  
 @app.get("/health")
 async def health():
     return {"status": "ok", "node": config.NODE_ID}
 
-# Step 2: Basic upload
-@app.post("/files/{filename}")
-async def upload_file(filename: str, file: UploadFile = File(...)):
-    content = await file.read()
-    block_id = generate_block_id(filename, 0)
-    
-    # Save
-    await storage.write_block(block_id, content)
-    
-    return {
-        "filename": filename,
-        "block_id": block_id,
-        "size": len(content)
-    }
-
-# Step 3: Basic download
 @app.get("/files/{filename}")
 async def download_file(filename: str):
     # Simple version - just return first block
