@@ -1,14 +1,18 @@
-from registry import registry
-import asyncio
-import httpx
 from fastapi import FastAPI, UploadFile, File
 import uvicorn
+import asyncio
+import httpx
+import time
+import os  # Add this
+
 from config import config
 from storage import StorageManager
+from registry import NodeRegistry  # Changed: import class, not instance
 from utils import logger, generate_block_id
 
 # Initialize components
 storage = StorageManager()
+registry = NodeRegistry(config.NODE_ID)  # Changed: create instance with node ID
 
 # Create FastAPI app
 app = FastAPI(title=f"Node {config.NODE_ID}")
