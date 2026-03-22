@@ -255,7 +255,7 @@ class RecoveryManager:
       """
       Handle node coming back online
       """
-      logger.info(f"🔄 Node {recovered_node} is RECOVERING")
+      logger.info(f"Node {recovered_node} is RECOVERING")
       
       # Plan what needs to be restored
       recovery_plan = await self.plan_recovery(recovered_node, file_map)
