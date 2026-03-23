@@ -6,6 +6,7 @@ import httpx
 import time
 import os
 from replication import ReplicationManager
+from recovery import RecoveryManager
 
 from config import config
 from storage import StorageManager
@@ -16,6 +17,7 @@ from utils import logger, generate_block_id
 storage = StorageManager()
 registry = NodeRegistry(config.NODE_ID)
 replication = ReplicationManager(config.NODE_ID, storage)
+recovery = RecoveryManager(config.NODE_ID, storage)
 
 # Create FastAPI app
 app = FastAPI(title=f"Node {config.NODE_ID}")
@@ -128,6 +130,7 @@ async def heartbeat_sender():
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(heartbeat_sender())
+    asyncio.create_task(recovery.start())
 
 #The main entry point to run the server
 if __name__ == "__main__":
