@@ -28,8 +28,14 @@ class FaultToleranceManager:
         self.heartbeat_interval = 2  # seconds
         
         self.running = True
+        self._start_time = time.time()
         
         logger.info(f"FaultToleranceManager initialized for {node_id}")
+    
+    # Add this method anywhere in the class
+    def _get_start_time(self):
+        """Get start time for uptime calculation"""
+        return self._start_time
     
     async def start(self):
         """Start fault tolerance monitoring"""
