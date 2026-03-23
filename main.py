@@ -13,6 +13,7 @@ from config import config
 from storage import StorageManager
 from registry import NodeRegistry
 from utils import logger, generate_block_id
+from utils import logger, generate_block_id, format_size
 
 # Initialize components
 storage = StorageManager()
@@ -142,6 +143,31 @@ async def shutdown():
     await replication.stop()
     await recovery.stop()
     await fault_tolerance.stop()    
+
+@app.get("/status")
+async def status():
+    """Comprehensive system status"""
+    # Get system status from fault tolerance
+    system_status = await fault_tolerance.get_system_status()
+    
+    # Get replication stats
+    replication_stats = replication.get_stats()
+    
+    # Get checkpoint info
+    checkpoint_info = recovery.get_checkpoint_info()
+    
+    # Get local storage info
+    blocks = await storage.list_blocks()
+    
+    return {
+        "node_id": config.NODE_ID,
+        "system": system_status,
+        "storage": {
+            "block_count": len(blocks),
+        },
+        "replication": replication_stats,
+        "checkpoint": checkpoint_info
+    }
 
 #The main entry point to run the server
 if __name__ == "__main__":
