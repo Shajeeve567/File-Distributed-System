@@ -5,6 +5,7 @@ import asyncio
 import httpx
 import time
 import os
+from replication import ReplicationManager
 
 from config import config
 from storage import StorageManager
@@ -14,6 +15,7 @@ from utils import logger, generate_block_id
 # Initialize components
 storage = StorageManager()
 registry = NodeRegistry(config.NODE_ID)
+replication = ReplicationManager(config.NODE_ID, storage)
 
 # Create FastAPI app
 app = FastAPI(title=f"Node {config.NODE_ID}")
@@ -22,16 +24,20 @@ BLOCK_SIZE = 1024 * 1024  # 1MB blocks
 #File upload endpoint - accepts a file, splits into blocks, and saves them
 @app.post("/files/{filename}")
 async def upload_file(filename: str, file: UploadFile = File(...)):
-    """Upload a file - splits into blocks"""
+    """Upload a file - splits into blocks and replicates"""
     content = await file.read()
     blocks = []
+    
+    # Get live nodes for replication
+    live_nodes = await registry.get_live_nodes()
+    target_nodes = [n for n in live_nodes if n != config.NODE_ID]
     
     # Split into blocks
     for i in range(0, len(content), BLOCK_SIZE):
         block_data = content[i:i+BLOCK_SIZE]
         block_id = generate_block_id(filename, i // BLOCK_SIZE)
         
-        # Save block
+        # Save block locally
         await storage.write_block(block_id, block_data)
         
         blocks.append({
@@ -39,17 +45,33 @@ async def upload_file(filename: str, file: UploadFile = File(...)):
             "offset": i,
             "size": len(block_data)
         })
+        
+        # Replicate to other nodes
+        if target_nodes:
+            await replication.replicate_block(
+                block_id=block_id,
+                data=block_data,
+                target_nodes=target_nodes,
+                version=1
+            )
     
     # Save file manifest
     manifest = {
         "filename": filename,
         "total_size": len(content),
         "blocks": blocks,
-        "created": time.time()
+        "created": time.time(),
+        "replicated_to": target_nodes
     }
     await storage.save_metadata(f"manifest_{filename}", manifest)
     
-    return manifest
+    return {
+        "status": "success",
+        "filename": filename,
+        "total_size": len(content),
+        "blocks": len(blocks),
+        "replicated_to": target_nodes
+    }
 
 @app.get("/files/{filename}")
 async def download_file(filename: str):
