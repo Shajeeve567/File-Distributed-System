@@ -42,6 +42,7 @@ class StorageManager:
         async with aiofiles.open(path, 'r') as f:
             return json.loads(await f.read())
     
+    
     # Step 3: Add checksums for integrity
     async def write_with_checksum(self, block_id, data):
         """Save with integrity check"""
@@ -53,6 +54,14 @@ class StorageManager:
             "created": time.time()
         })
         return True
+    
+    async def list_blocks(self):
+        """List all blocks stored locally"""
+        blocks = []
+        for filename in os.listdir(self.blocks_dir):
+            if filename.endswith('.dat') and not filename.startswith('manifest_'):
+                blocks.append(filename[:-4])  # Remove .dat extension
+        return blocks
 
 # Test each step as you go
 if __name__ == "__main__":
@@ -65,3 +74,4 @@ if __name__ == "__main__":
         data = await storage.read_block("test")
         print(f"Read: {data}")
     asyncio.run(test())
+  
