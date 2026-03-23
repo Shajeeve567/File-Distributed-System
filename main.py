@@ -5,9 +5,10 @@ import asyncio
 import httpx
 import time
 import os
+
 from replication import ReplicationManager
 from recovery import RecoveryManager
-
+from fault_tolerance import FaultToleranceManager
 from config import config
 from storage import StorageManager
 from registry import NodeRegistry
@@ -18,6 +19,7 @@ storage = StorageManager()
 registry = NodeRegistry(config.NODE_ID)
 replication = ReplicationManager(config.NODE_ID, storage)
 recovery = RecoveryManager(config.NODE_ID, storage)
+fault_tolerance = FaultToleranceManager(config.NODE_ID, storage, registry, replication, recovery)
 
 # Create FastAPI app
 app = FastAPI(title=f"Node {config.NODE_ID}")
@@ -131,6 +133,15 @@ async def heartbeat_sender():
 async def startup():
     asyncio.create_task(heartbeat_sender())
     asyncio.create_task(recovery.start())
+    asyncio.create_task(fault_tolerance.start())
+    
+@app.on_event("shutdown")
+async def shutdown():
+    """Clean shutdown"""
+    logger.info(f"Shutting down node {config.NODE_ID}")
+    await replication.stop()
+    await recovery.stop()
+    await fault_tolerance.stop()    
 
 #The main entry point to run the server
 if __name__ == "__main__":
