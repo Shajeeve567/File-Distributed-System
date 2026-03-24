@@ -218,6 +218,34 @@ async def fault_status():
     """Detailed fault tolerance status"""
     return await fault_tolerance.get_system_status()
 
+@app.get("/files/{filename}")
+async def download_file(filename: str):
+    """Download a file - assembles from blocks"""
+    manifest = await storage.get_metadata(f"manifest_{filename}")
+    if not manifest:
+        return {"error": "File not found"}
+    
+    # Read and combine all blocks
+    all_data = b""
+    missing_blocks = []
+    
+    for block_info in manifest["blocks"]:
+        data = await storage.read_block(block_info["block_id"])
+        if data:
+            all_data += data
+        else:
+            missing_blocks.append(block_info["block_id"])
+    
+    # Return error if blocks missing
+    if missing_blocks:
+        return {"error": f"File corrupted, missing {len(missing_blocks)} blocks"}
+    
+    return Response(
+        content=all_data, 
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
 #The main entry point to run the server
 if __name__ == "__main__":
     uvicorn.run(app, host=config.HOST, port=config.PORT)
