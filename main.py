@@ -78,28 +78,6 @@ async def upload_file(filename: str, file: UploadFile = File(...)):
         "replicated_to": target_nodes
     }
 
-@app.get("/files/{filename}")
-async def download_file(filename: str):
-    """Download a file - assembles from blocks"""
-    # Load manifest
-    manifest = await storage.get_metadata(f"manifest_{filename}")
-    if not manifest:
-        return {"error": "File not found"}
-    
-    # Read and combine all blocks
-    all_data = b""
-    for block_info in manifest["blocks"]:
-        data = await storage.read_block(block_info["block_id"])
-        if data:
-            all_data += data
-    
-    # Return the file
-    return Response(
-        content=all_data, 
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
-
 #Health check endpoint to verify the node is running
 @app.get("/health")
 async def health():
@@ -132,9 +110,19 @@ async def heartbeat_sender():
 #the startup event to launch the heartbeat sender when the server starts
 @app.on_event("startup")
 async def startup():
+    """Start all background tasks"""
+    logger.info(f"Starting node {config.NODE_ID} on port {config.PORT}")
+    
+    # Start all background tasks
     asyncio.create_task(heartbeat_sender())
+    asyncio.create_task(replication.start())
     asyncio.create_task(recovery.start())
     asyncio.create_task(fault_tolerance.start())
+    
+    # Register self as active
+    await registry.register_node(config.NODE_ID)
+    
+    logger.info(f"Node {config.NODE_ID} fully started")
     
 @app.on_event("shutdown")
 async def shutdown():
