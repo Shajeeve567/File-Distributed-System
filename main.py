@@ -189,6 +189,29 @@ async def receive_replication(data: dict):
         return {"status": "failed"}, 500
     except Exception as e:
         return {"error": str(e)}, 500
+    
+@app.post("/recovery/plan")
+async def plan_recovery(data: dict):
+    """Plan recovery for a failed node"""
+    failed_node = data.get("failed_node")
+    if not failed_node:
+        return {"error": "Missing failed_node"}, 400
+    
+    file_map = await fault_tolerance._get_file_map()
+    plan = await recovery.plan_recovery(failed_node, file_map)
+    return {"failed_node": failed_node, "recovery_plan": plan}    
+
+@app.post("/recovery/execute")
+async def execute_recovery(data: dict):
+    """Execute recovery for a node"""
+    recovering_node = data.get("recovering_node")
+    recovery_plan = data.get("recovery_plan", {})
+    
+    if not recovering_node:
+        return {"error": "Missing recovering_node"}, 400
+    
+    await recovery.execute_recovery(recovering_node, recovery_plan)
+    return {"status": "complete", "recovering_node": recovering_node}
 
 #The main entry point to run the server
 if __name__ == "__main__":
