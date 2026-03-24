@@ -213,6 +213,11 @@ async def execute_recovery(data: dict):
     await recovery.execute_recovery(recovering_node, recovery_plan)
     return {"status": "complete", "recovering_node": recovering_node}
 
+@app.get("/fault/status")
+async def fault_status():
+    """Detailed fault tolerance status"""
+    return await fault_tolerance.get_system_status()
+
 #The main entry point to run the server
 if __name__ == "__main__":
     uvicorn.run(app, host=config.HOST, port=config.PORT)
