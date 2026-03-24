@@ -169,6 +169,27 @@ async def status():
         "checkpoint": checkpoint_info
     }
 
+@app.post("/replicate")
+async def receive_replication(data: dict):
+    """Receive replicated block from another node"""
+    block_id = data.get("block_id")
+    data_hex = data.get("data")
+    source_node = data.get("source_node")
+    
+    if not block_id or not data_hex:
+        return {"error": "Missing block_id or data"}, 400
+    
+    try:
+        block_data = bytes.fromhex(data_hex)
+        success = await storage.write_with_checksum(block_id, block_data)
+        
+        if success:
+            logger.info(f"Received replicated block {block_id} from {source_node}")
+            return {"status": "accepted", "block_id": block_id}
+        return {"status": "failed"}, 500
+    except Exception as e:
+        return {"error": str(e)}, 500
+
 #The main entry point to run the server
 if __name__ == "__main__":
     uvicorn.run(app, host=config.HOST, port=config.PORT)
