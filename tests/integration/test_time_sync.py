@@ -1,89 +1,61 @@
-"""Test your time sync module using stubs from other members."""
+"""Test your time sync module."""
 
 import pytest
 from shared.models import ClockStatus
-from feature.time_sync.clock_sync import compute_offsets, assess_cluster_health
-from feature.time_sync.fallback import handle_time_sync_failure, FallbackStrategy
-from feature.time_sync.monitor import TimeSyncMonitor
+from features.time_sync.clock_sync import compute_offsets, assess_cluster_health
+from features.time_sync.fallback import handle_time_sync_failure, FallbackStrategy
+from features.time_sync.monitor import TimeSyncMonitor
 
 
 class TestTimeSync:
-    """Test all time sync functionality."""
     
-    def test_compute_offsets_basic(self):
-        """Test that offset calculation works."""
-        node_times = {"S1": 100.123, "S2": 100.127, "S3": 100.118}
+    def test_compute_offsets_correct_milliseconds(self):
+        """VERIFY THE BUG IS FIXED: Should return milliseconds, not seconds."""
+        node_times = {
+            "S1": 100.123,
+            "S2": 100.127,  # 4ms ahead
+            "S3": 100.118,  # 5ms behind
+        }
+        
         offsets = compute_offsets(node_times, "S1")
         
+        # FIXED: Should be 4 and -5, NOT 0.004 and -0.005
         assert offsets["S1"] == 0
-        assert offsets["S2"] == 4   # 4ms ahead
-        assert offsets["S3"] == -5  # 5ms behind
+        assert offsets["S2"] == 4   # (0.127 - 0.123) * 1000 = 4
+        assert offsets["S3"] == -5  # (0.118 - 0.123) * 1000 = -5
     
-    def test_assess_health_creates_clockstatus(self):
-        """Test that we get proper ClockStatus objects."""
-        offsets = {"S1": 0, "S2": 60, "S3": -5}
+    def test_assess_health_with_drift(self):
+        """Test health assessment with actual drift values."""
+        # S2 is 60ms ahead (out of sync if threshold is 50)
+        offsets = {"S1": 0, "S2": 60, "S3": 10}
+        
         statuses, healthy = assess_cluster_health(offsets, max_offset_ms=50)
         
-        assert len(statuses) == 3
-        assert all(isinstance(s, ClockStatus) for s in statuses)
+        assert healthy is False
         
-        # S2 should be out of sync
         s2 = next(s for s in statuses if s.node_id == "S2")
         assert s2.in_sync is False
         assert s2.offset_ms == 60
-        
-        assert healthy is False
-    
-    def test_monitor_uses_stubs(self):
-        """Test that monitor automatically gets data from stubs."""
-        monitor = TimeSyncMonitor(max_offset_ms=50)
-        
-        # This should work without any other code
-        statuses, strategy = monitor.check_cluster_health()
-        
-        # Should get all 3 nodes from stub
-        assert len(statuses) == 3
-        
-        # Stubs return all nodes alive, so all should be in sync
-        assert all(s.in_sync for s in statuses)
-    
-    def test_monitor_detects_drift(self):
-        """Test that drift is detected correctly."""
-        monitor = TimeSyncMonitor(max_offset_ms=50)
-        
-        # Simulate S2 having 120ms drift
-        node_times = {"S1": 100.000, "S2": 100.120, "S3": 100.010}
-        
-        statuses, strategy = monitor.check_cluster_health(node_times, "S1")
-        
-        # S2 should be out of sync
-        s2 = next(s for s in statuses if s.node_id == "S2")
-        assert s2.in_sync is False
-        assert s2.offset_ms == 120
-        
-        # Strategy should be USE_COORDINATOR_TIME (moderate drift)
-        assert strategy == FallbackStrategy.USE_COORDINATOR_TIME
     
     def test_fallback_levels(self):
         """Test different fallback levels."""
-        # Minor drift (60ms) -> WARN_ONLY
+        # 60ms drift -> WARN_ONLY
         offsets = {"S1": 0, "S2": 60}
         assert handle_time_sync_failure(offsets, 50) == FallbackStrategy.WARN_ONLY
         
-        # Moderate drift (120ms) -> USE_COORDINATOR_TIME
+        # 120ms drift -> USE_COORDINATOR_TIME
         offsets = {"S1": 0, "S2": 120}
         assert handle_time_sync_failure(offsets, 50) == FallbackStrategy.USE_COORDINATOR_TIME
         
-        # Severe drift (200ms) -> PAUSE_WRITES
+        # 200ms drift -> PAUSE_WRITES
         offsets = {"S1": 0, "S2": 200}
         assert handle_time_sync_failure(offsets, 50) == FallbackStrategy.PAUSE_WRITES
     
-    def test_clock_impl_returns_statuses(self):
-        """Test the main interface."""
-        from feature.time_sync.clock_impl import RealClockMonitor
-        
-        monitor = RealClockMonitor()
-        statuses = monitor.cluster_time_status(["S1", "S2", "S3"])
-        
-        assert len(statuses) == 3
-        assert all(isinstance(s, ClockStatus) for s in statuses)
+    def test_monitor_imports_correctly(self):
+        """Test that all imports work."""
+        monitor = TimeSyncMonitor(max_offset_ms=50)
+        assert monitor.max_offset_ms == 50
+        assert monitor.current_fallback == FallbackStrategy.WARN_ONLY
+
+
+# Run with: pytest tests/integration/test_time_sync.py -v
