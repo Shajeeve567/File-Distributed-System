@@ -1,7 +1,9 @@
 from typing import List, Dict
 from shared.models import ClockStatus
 from shared.interfaces import ClockMonitor
-from monitor import TimeSyncMonitor
+
+from .monitor import TimeSyncMonitor
+from .clock_sync import compute_offsets
 
 
 class RealClockMonitor(ClockMonitor):
@@ -10,7 +12,7 @@ class RealClockMonitor(ClockMonitor):
         self.monitor = TimeSyncMonitor(max_offset_ms)
     
     def collect_offsets(self, node_ids: List[str]) -> Dict[str, int]:
-        
+        """Get time offsets for all nodes."""
         # Get timestamps from Member 1's stub
         node_times = self.monitor.get_heartbeat_timestamps(node_ids)
         
@@ -18,7 +20,6 @@ class RealClockMonitor(ClockMonitor):
         reference_node = self.monitor.get_reference_node()
         
         # Calculate offsets
-        from clock_sync import compute_offsets
         offsets = compute_offsets(node_times, reference_node)
         
         return offsets
@@ -28,12 +29,7 @@ class RealClockMonitor(ClockMonitor):
         node_ids: List[str], 
         max_offset_ms: int = 50
     ) -> List[ClockStatus]:
-        """
-        Get time sync status for each node.
-        
-        This is the main method other services call.
-        It returns a list of ClockStatus objects telling if each node is in sync.
-        """
+        """Get time sync status for each node."""
         offsets = self.collect_offsets(node_ids)
         
         statuses = []
