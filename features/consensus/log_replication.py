@@ -1,9 +1,10 @@
 import asyncio 
 import logging
-
+import httpx
 from typing import List, Optional
 from shared.models import LogEntry
 from features.consensus.raft_node import RaftNode
+from shared.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -14,17 +15,23 @@ class ReplicationManager:
         self.raft_node = raft_node
         self._running = True 
         self._task: Optional[asyncio.Task] = None 
+        self._client: Optional[httpx.AsyncClient] = None
 
     async def start(self):
         """Start heartbeats."""
         self._running = True
+        self._client = httpx.AsyncClient()
         self._task = asyncio.create_task(self._heartbeat_loop())
+
 
     async def stop(self):
         """Stop heartbeats."""
         self._running = False
+        if self._client:
+            await self._client.aclose()
         if self._task:
             self._task.cancel()
+
             try:
                 await self._task
             except asyncio.CancelledError:
@@ -33,17 +40,12 @@ class ReplicationManager:
     async def _heartbeat_loop(self):
         """Send periodic heartbeats."""
         while self._running:
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)
             
-            # Quick check without lock first
             if self.raft_node.state != "leader":
                 continue
             
-            async with self.raft_node._lock:
-                is_leader = (self.raft_node.state == "leader")
-            
-            if is_leader:
-                await self._send_heartbeats()
+            await self._send_heartbeats()
 
     async def _send_heartbeats(self):
         """Send heartbeats to all peers."""
@@ -55,7 +57,7 @@ class ReplicationManager:
 
     async def replicate_log(self, entry: LogEntry) -> bool:
         """Replicate a log entry to followers."""
-        logger.info(f"🔵 replicate_log: starting for entry")
+        logger.info(f"🔵 replicate_log: starting for entry {entry.index}")
         
         # Append locally
         if not await self.raft_node.append_entry(entry):
@@ -66,18 +68,15 @@ class ReplicationManager:
         
         # Send to followers
         await self._send_heartbeats()
-        logger.info(f"🟡 Heartbeats sent, waiting for commit...")
         
         # Wait for commit with timeout
-        timeout = 2.0
+        timeout = 3.0
         start = asyncio.get_event_loop().time()
         
         while True:
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)
             
             async with self.raft_node._lock:
-                logger.debug(f"Current commit_index={self.raft_node.commit_index}, entry.index={entry.index}")
-                
                 if entry.index <= self.raft_node.commit_index:
                     logger.info(f"✅ Entry {entry.index} committed!")
                     return True
@@ -87,9 +86,11 @@ class ReplicationManager:
                 return False
 
     async def _append_entries(self, peer_id: str, is_heartbeat: bool = False) -> bool:
-        """Send AppendEntries RPC to peer."""
-        logger.debug(f"📤 Sending append_entries to {peer_id}, heartbeat={is_heartbeat}")
-        
+        """Send AppendEntries RPC to peer via HTTP."""
+        peer_url = config.ALL_NODES.get(peer_id)
+        if not peer_url:
+            return False
+
         async with self.raft_node._lock:
             if self.raft_node.state != "leader":
                 return False
@@ -101,38 +102,51 @@ class ReplicationManager:
             
             entries = []
             if not is_heartbeat and prev_log_index < len(self.raft_node.log):
-                entries = self.raft_node.log[prev_log_index:]
-                logger.info(f"📦 Sending {len(entries)} entries to {peer_id}")
+                entries = [e.dict() for e in self.raft_node.log[prev_log_index:]]
+
+            data = {
+                "term": self.raft_node.current_term,
+                "leader_id": self.raft_node.node_id,
+                "prev_log_index": prev_log_index,
+                "prev_log_term": prev_log_term,
+                "entries": entries,
+                "leader_commit": self.raft_node.commit_index
+            }
+
+        try:
+            if not self._client:
+                return False
+                
+            response = await self._client.post(
+                f"{peer_url}/raft/append_entries",
+                json=data,
+                timeout=2.0
+            )
+            if response.status_code == 200:
+
+                    result = response.json()
+                    return await self._handle_append_response(peer_id, result.get("success", False))
+        except Exception as e:
+            logger.debug(f"Failed to send append_entries to {peer_id}: {e}")
         
-        # Simulate network delay
-        await asyncio.sleep(0.005)
-        
-        # Simulate successful response
-        logger.debug(f"📬 Simulated success response from {peer_id}")
-        return await self._handle_append_response(peer_id, success=True)
+        return False
 
     async def _handle_append_response(self, peer_id: str, success: bool) -> bool:
         """Handle AppendEntries response."""
-        logger.debug(f"📬 Received append response from {peer_id}: success={success}")
-        
         async with self.raft_node._lock:
             if self.raft_node.state != "leader":
-                logger.warning(f"Not leader anymore, ignoring response")
                 return False
             
             if success:
-                old_match = self.raft_node.match_index.get(peer_id, 0)
                 self.raft_node.match_index[peer_id] = len(self.raft_node.log)
                 self.raft_node.next_index[peer_id] = len(self.raft_node.log) + 1
-                
-                logger.info(f"📊 Peer {peer_id} match_index: {old_match} -> {self.raft_node.match_index[peer_id]}")
-                logger.info(f"📊 All match indices: {self.raft_node.match_index}")
-                
-                await self.raft_node.update_commit_index()
+                updated = await self.raft_node.update_commit_index()
+                if updated:
+                    # Force immediate heartbeat to propagate new commit_index
+                    asyncio.create_task(self._send_heartbeats())
             else:
                 old_next = self.raft_node.next_index.get(peer_id, 1)
                 self.raft_node.next_index[peer_id] = max(1, old_next - 1)
-                logger.info(f"⬇️ Peer {peer_id} next_index: {old_next} -> {self.raft_node.next_index[peer_id]}")
             
             return success
 
@@ -154,13 +168,19 @@ class ReplicationManager:
                      self.raft_node.log[prev_log_index - 1].term == prev_log_term)):
                     
                     # Append new entries
-                    for entry_data in entries:
-                        entry = LogEntry(**entry_data)
-                        self.raft_node.log.append(entry)
+                    if entries:
+                        # Clear conflicting entries
+                        self.raft_node.log = self.raft_node.log[:prev_log_index]
+                        for entry_data in entries:
+                            entry = LogEntry(**entry_data)
+                            self.raft_node.log.append(entry)
                     
                     if leader_commit > self.raft_node.commit_index:
+                        old_commit = self.raft_node.commit_index
                         self.raft_node.commit_index = min(leader_commit, len(self.raft_node.log))
-                        await self.raft_node._apply_committed_entries()
+                        if self.raft_node.commit_index > old_commit:
+                            logger.info(f"📈 [NODE {self.raft_node.node_id}] Commit index updated to {self.raft_node.commit_index}")
+                            await self.raft_node._apply_committed_entries()
                     
                     success = True
             
@@ -168,4 +188,4 @@ class ReplicationManager:
                 "term": self.raft_node.current_term, 
                 "success": success, 
                 "match_index": len(self.raft_node.log)
-            }
+            }

@@ -204,7 +204,7 @@ requests
 
 ## Demo Mode (Recommended)
 
-Start full 5-node cluster automatically:
+Start full 3-node cluster automatically on your local machine:
 
 ```
 python main.py --mode demo
@@ -212,40 +212,46 @@ python main.py --mode demo
 
 This will:
 
-* Start 5 FastAPI-based nodes
-* Elect a leader
-* Perform file writes
-* Simulate node failure
-* Recover failed node
-* Demonstrate replication and consensus
+* Start 3 independent FastAPI-based nodes (node1, node2, node3)
+* Perform Raft leader election
+* Initiate periodic time synchronization
+* Allow you to track heartbeats and node health logs
 
 ---
 
 ## Run a Node Manually
 
-```
-uvicorn main:app --host 127.0.0.1 --port 9000
-```
-
-Or using your main entry:
+To run a specific node in a larger cluster:
 
 ```
-python main.py --mode server --node-id <id> --nodes <total_nodes> --base-port 9000
+python main.py --mode server --node-id <id> --port <port>
 ```
 
 Example:
 
 ```
-python main.py --mode server --node-id 0 --nodes 5 --base-port 9000
+python main.py --mode server --node-id node1 --port 8001
 ```
 
 ---
 
-## Run Client
+## Run Client CLI
+
+Once the cluster is running, you can use the interactive client to perform file operations:
 
 ```
-python main.py --mode client --nodes 5 --base-port 9000
+python main.py --mode client
 ```
+
+### Client Commands
+
+| Command            | Description             |
+| ------------------ | ----------------------- |
+| write <file> <text>| Upload content to file  |
+| read <file>        | Retrieve file content   |
+| status             | Show cluster status     |
+| exit               | Quit the client         |
+
 
 ---
 

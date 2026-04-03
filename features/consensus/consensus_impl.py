@@ -39,6 +39,17 @@ async def replicate_log(entry: LogEntry) -> bool:
         return False
     return await _replication_mgr.replicate_log(entry)
 
+async def get_log_entry(index: int) -> Optional[LogEntry]:
+    """Retrieve a specific log entry by index."""
+    if _raft_node is None or index < 0 or index >= len(_raft_node.log):
+        return None
+    return _raft_node.log[index]
+
+async def register_commit_callback(cb):
+    """Register a callback for Raft log commit events."""
+    if _raft_node:
+        _raft_node.commit_callbacks.append(cb)
+
 async def start_election() -> str:
     """Manually trigger election (for testing)."""
     if _election_mgr is None:
@@ -102,6 +113,12 @@ class ConsensusEngineWrapper:
     
     async def start_election(self):
         return await start_election()
+    
+    async def get_log_entry(self, index: int):
+        return await get_log_entry(index)
+
+    async def register_commit_callback(self, cb):
+        return await register_commit_callback(cb)
 
 
 # Export the consensus_engine object (replaces stub)

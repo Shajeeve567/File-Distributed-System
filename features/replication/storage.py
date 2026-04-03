@@ -1,22 +1,31 @@
-# storage.py - Build this piece by piece
 import os
-import aiofiles
+import asyncio
 import json
-from utils import calculate_checksum, format_size, logger
+from shared.utils import calculate_checksum, format_size, logger
 
 class StorageManager:
     def __init__(self):
-        from config import config
-        self.blocks_dir = config.BLOCKS_DIR
-        logger.info(f"Storage initialized at {self.blocks_dir}")
+        from shared.config import config
+        # Use absolute path resolving for complete reliability across environments
+        self.blocks_dir = os.path.abspath(config.BLOCKS_DIR)
+        os.makedirs(self.blocks_dir, exist_ok=True)
+        logger.info(f"💎 Storage IRONCLAD initialized at {self.blocks_dir}")
     
     # Step 1: Basic write/read
     async def write_block(self, block_id, data):
-        """Save a block to disk"""
+        """Save a block to disk with hardware sync and verification"""
         path = os.path.join(self.blocks_dir, f"{block_id}.dat")
-        async with aiofiles.open(path, 'wb') as f:
-            await f.write(data)
-        logger.info(f"Wrote block {block_id}")
+        def _write():
+            with open(path, 'wb') as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())  # Hardware sync
+            # Post-write verify
+            if not os.path.exists(path) or os.path.getsize(path) != len(data):
+                raise IOError(f"Write verification failed for {path}")
+
+        await asyncio.to_thread(_write)
+        logger.info(f"💾 IRONCLAD: Wrote block {block_id} ({len(data)} bytes) to {path}")
         return True
     
     async def read_block(self, block_id):
@@ -24,23 +33,30 @@ class StorageManager:
         path = os.path.join(self.blocks_dir, f"{block_id}.dat")
         if not os.path.exists(path):
             return None
-        async with aiofiles.open(path, 'rb') as f:
-            return await f.read()
+        def _read():
+            with open(path, 'rb') as f:
+                return f.read()
+        return await asyncio.to_thread(_read)
     
     # Step 2: Add metadata
     async def save_metadata(self, block_id, metadata):
         """Store block info separately"""
         path = os.path.join(self.blocks_dir, f"{block_id}.meta")
-        async with aiofiles.open(path, 'w') as f:
-            await f.write(json.dumps(metadata))
+        def _write_meta():
+            with open(path, 'w') as f:
+                f.write(json.dumps(metadata))
+        await asyncio.to_thread(_write_meta)
+        logger.info(f"📄 Saved manifest for {block_id}")
     
     async def get_metadata(self, block_id):
         """Retrieve block info"""
         path = os.path.join(self.blocks_dir, f"{block_id}.meta")
         if not os.path.exists(path):
             return None
-        async with aiofiles.open(path, 'r') as f:
-            return json.loads(await f.read())
+        def _read_meta():
+            with open(path, 'r') as f:
+                return json.loads(f.read())
+        return await asyncio.to_thread(_read_meta)
     
     
     # Step 3: Add checksums for integrity

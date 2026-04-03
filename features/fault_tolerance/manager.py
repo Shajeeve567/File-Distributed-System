@@ -2,7 +2,7 @@ import asyncio
 import time
 from enum import Enum
 from typing import Dict, List, Optional
-from utils import logger
+from shared.utils import logger
 
 class NodeStatus(Enum):
     ACTIVE = "active"
@@ -89,7 +89,7 @@ class FaultToleranceManager:
     
     def _get_all_nodes(self) -> List[str]:
         """Get list of all nodes in cluster"""
-        from config import config
+        from shared.config import config
         return list(config.ALL_NODES.keys())
     
     async def _get_file_map(self) -> Dict[str, List[str]]:

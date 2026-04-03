@@ -3,8 +3,8 @@ import asyncio
 import time
 from enum import Enum
 from typing import Dict, List, Optional
-from utils import logger
-from config import config
+from shared.utils import logger
+from shared.config import config
 
 class NodeStatus(Enum):
     ACTIVE = "active"

@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import httpx
 from typing import List, Optional
 from features.consensus.raft_node import RaftNode
+from shared.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -12,33 +14,46 @@ class ElectionManager:
         self.raft_node = raft_node
         self._running = True
         self._task: Optional[asyncio.Task] = None
-        self._election_in_progress = False   # ✅ NEW
+        self._election_in_progress = False
+        self._client: Optional[httpx.AsyncClient] = None
+
 
     async def start(self):
         self._running = True
+        self._client = httpx.AsyncClient()
         self._task = asyncio.create_task(self._monitor_loop())
         logger.info(f"Election monitor started for {self.raft_node.node_id}")
+
     
     async def stop(self):
         self._running = False
+        if self._client:
+            await self._client.aclose()
         if self._task:
             self._task.cancel()
             try:
                 await self._task
             except asyncio.CancelledError:
                 pass
+
     
     async def _monitor_loop(self):
         while self._running:
-            await asyncio.sleep(0.01)
+            try:
+                await asyncio.sleep(0.1) 
+                
+                if (
+                    not self._election_in_progress and
+                    self.raft_node.state != "leader" and
+                    await self.raft_node.should_start_election()
+                ):
+                    logger.info(f"⚡ ELECTION TRIGGERED for {self.raft_node.node_id}")
+                    asyncio.create_task(self.start_election())
+            except Exception as e:
+                logger.error(f"❌ Election loop error on {self.raft_node.node_id}: {e}", exc_info=True)
+                await asyncio.sleep(1.0) # Backoff
 
-            if (
-                not self._election_in_progress and
-                self.raft_node.state != "leader" and
-                await self.raft_node.should_start_election()
-            ):
-                logger.info(f"Election timeout triggered for {self.raft_node.node_id}")
-                asyncio.create_task(self.start_election())  # ✅ don't block loop
+
     
     async def start_election(self):
         if self._election_in_progress:
@@ -57,7 +72,6 @@ class ElectionManager:
             tasks = [self._request_vote(peer) for peer in self.raft_node.peer_ids]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # ❗ Check if still candidate
             if self.raft_node.state != "candidate":
                 return
 
@@ -65,16 +79,11 @@ class ElectionManager:
 
             for result in results:
                 if isinstance(result, dict):
-                    # ✅ handle real responses
                     if result.get("term", 0) > current_term:
                         await self.raft_node.become_follower(result["term"], None)
                         return
                     if result.get("vote_granted"):
                         votes += 1
-
-                elif result is True:
-                    votes += 1
-
                 elif isinstance(result, Exception):
                     logger.error(f"Vote request failed: {result}")
 
@@ -93,28 +102,45 @@ class ElectionManager:
                     f"Node {self.raft_node.node_id} is now LEADER for term {self.raft_node.current_term}"
                 )
 
-                # ✅ IMPORTANT: trigger heartbeats immediately
-                if hasattr(self.raft_node, "replication_manager"):
-                    await self.raft_node.replication_manager._send_heartbeats()
-
+                # Ensure heartbeat loop reacts to leader state
             else:
-                await self.raft_node.become_follower(
-                    self.raft_node.current_term, None
+                logger.info(
+                    f"Node {self.raft_node.node_id} failed to win election (votes={votes}/{majority})"
                 )
+
 
         finally:
             self._election_in_progress = False
 
     async def _request_vote(self, peer_id: str):
-        await asyncio.sleep(0.01)
+        """Send RequestVote RPC to peer using HTTP."""
+        peer_url = config.ALL_NODES.get(peer_id)
+        if not peer_url or not self._client:
+            return {"term": 0, "vote_granted": False}
 
-        logger.debug(f"{self.raft_node.node_id} requesting vote from {peer_id}")
+        last_log_index = len(self.raft_node.log)
+        last_log_term = self.raft_node.log[-1].term if self.raft_node.log else 0
 
-        # Simulated response (replace with HTTP later)
-        return {
+        data = {
             "term": self.raft_node.current_term,
-            "vote_granted": True
+            "candidate_id": self.raft_node.node_id,
+            "last_log_index": last_log_index,
+            "last_log_term": last_log_term
         }
+
+        try:
+            response = await self._client.post(
+                f"{peer_url}/raft/vote",
+                json=data,
+                timeout=2.0
+            )
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            logger.debug(f"Failed to request vote from {peer_id}: {e}")
+        
+        return {"term": 0, "vote_granted": False}
+
 
     async def handle_vote_request(
         self,
@@ -125,18 +151,23 @@ class ElectionManager:
     ) -> dict:
 
         async with self.raft_node._lock:
-
             if term > self.raft_node.current_term:
+                logger.info(f"Term higher than current ({term} > {self.raft_node.current_term}), stepping down.")
                 await self.raft_node.become_follower(term, None)
 
             vote_granted = False
+            reason = "Unknown"
 
-            if term == self.raft_node.current_term:
+
+            if term < self.raft_node.current_term:
+                reason = f"Term out of date ({term} < {self.raft_node.current_term})"
+            elif term == self.raft_node.current_term:
                 if (
-                    self.raft_node.voted_for is None
-                    or self.raft_node.voted_for == candidate_id
+                    self.raft_node.voted_for is not None
+                    and self.raft_node.voted_for != candidate_id
                 ):
-
+                    reason = f"Already voted for {self.raft_node.voted_for}"
+                else:
                     last_log_term_self = (
                         self.raft_node.log[-1].term
                         if self.raft_node.log else 0
@@ -153,12 +184,17 @@ class ElectionManager:
                         vote_granted = True
                         self.raft_node.voted_for = candidate_id
                         await self.raft_node.reset_election_timeout()
-
                         logger.info(
-                            f"{self.raft_node.node_id} voted for {candidate_id} (term {term})"
+                            f"✅ {self.raft_node.node_id} voted for {candidate_id} (term {term})"
                         )
+                    else:
+                        reason = "Candidate log not up to date"
+
+            if not vote_granted:
+                logger.info(f"❌ {self.raft_node.node_id} denied vote to {candidate_id}: {reason}")
 
             return {
                 "term": self.raft_node.current_term,
                 "vote_granted": vote_granted,
             }
+
