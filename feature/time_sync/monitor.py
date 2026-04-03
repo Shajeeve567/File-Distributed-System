@@ -3,16 +3,15 @@
 import time
 from typing import Optional, List
 from shared.models import ClockStatus, Heartbeat
-from .clock_sync import compute_offsets,assess_cluster_health
-from .fallback import FallbackStrategy,handle_time_sync_failure
 
-# Import other members' stubs
+from .clock_sync import compute_offsets, assess_cluster_health
+from .fallback import FallbackStrategy, handle_time_sync_failure
+
 from shared.stubs.node_health_stub import get_node_health_gateway
 from shared.stubs.consensus_stub import get_consensus_engine
 
 
 class TimeSyncMonitor:
-    
     
     def __init__(self, max_offset_ms: int = 50):
         self.max_offset_ms = max_offset_ms
@@ -25,7 +24,7 @@ class TimeSyncMonitor:
         self.consensus_engine = get_consensus_engine()
     
     def get_heartbeat_timestamps(self, node_ids: Optional[List[str]] = None) -> dict[str, float]:
-        
+        """Get timestamps from Member 1's heartbeat stub."""
         if node_ids is None:
             node_ids = self.health_gateway.list_live_nodes()
         
@@ -37,7 +36,7 @@ class TimeSyncMonitor:
         return timestamps
     
     def get_reference_node(self) -> str:
-        
+        """Get current leader from Member 4's consensus stub."""
         leader = self.consensus_engine.get_current_leader()
         return leader if leader else "S1"  # Fallback to S1 if no leader
     
@@ -46,7 +45,7 @@ class TimeSyncMonitor:
         node_times: Optional[dict[str, float]] = None,
         reference_node: Optional[str] = None
     ) -> tuple[list[ClockStatus], FallbackStrategy]:
-        
+        """Check cluster health and update state."""
         # Get data from stubs if not provided
         if node_times is None:
             node_times = self.get_heartbeat_timestamps()
