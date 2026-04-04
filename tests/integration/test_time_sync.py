@@ -2,7 +2,7 @@
 
 import pytest
 from shared.models import ClockStatus
-from feature.time_sync.clock_sync import compute_offsets, assess_cluster_health
+
 from feature.time_sync.fallback import handle_time_sync_failure, FallbackStrategy
 from feature.time_sync.monitor import TimeSyncMonitor
 
@@ -56,6 +56,3 @@ class TestTimeSync:
         monitor = TimeSyncMonitor(max_offset_ms=50)
         assert monitor.max_offset_ms == 50
         assert monitor.current_fallback == FallbackStrategy.WARN_ONLY
-
-
-# Run with: pytest tests/integration/test_time_sync.py -v
