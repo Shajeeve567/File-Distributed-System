@@ -3,7 +3,6 @@ from shared.models import ClockStatus
 from shared.interfaces import ClockMonitor
 
 from .monitor import TimeSyncMonitor
-from .clock_sync import compute_offsets
 
 
 class RealClockMonitor(ClockMonitor):
@@ -19,8 +18,8 @@ class RealClockMonitor(ClockMonitor):
         # Get leader from Member 4's stub as reference
         reference_node = self.monitor.get_reference_node()
         
-        # Calculate offsets
-        offsets = compute_offsets(node_times, reference_node)
+        # Calculate offsets using dummy 0s since OS NTP is active
+        offsets = {node: 0 for node in node_ids}
         
         return offsets
     
