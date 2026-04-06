@@ -50,8 +50,8 @@ class ElectionManager:
                 ):
                     logger.info(f"ELECTION TRIGGERED for {self.raft_node.node_id}. Applying random.uniform timeout...")
                     import random
-                    # Use random.uniform() for election timeout randomization to prevent split-brain cascades
-                    await asyncio.sleep(random.uniform(0.15, 0.35))
+                    # If multiple nodes timeout simultaneously, add slight randomization before sending votes
+                    await asyncio.sleep(random.uniform(0.05, 0.15))
                     asyncio.create_task(self.start_election())
             except Exception as e:
                 logger.error(f"Election loop error on {self.raft_node.node_id}: {e}", exc_info=True)
@@ -136,7 +136,7 @@ class ElectionManager:
             response = await self._client.post(
                 f"{peer_url}/raft/vote",
                 json=data,
-                timeout=2.0
+                timeout=0.2
             )
             if response.status_code == 200:
                 return response.json()
