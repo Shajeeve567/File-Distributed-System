@@ -566,3 +566,31 @@ if __name__ == "__main__":
         from shared.config import config
         uvicorn.run(app, host=config.HOST, port=config.PORT)
 
+
+@app.post("/benchmark/upload_latency")
+async def benchmark_upload(file: UploadFile = File(...)):
+    start = time.time()
+
+    filename = f"bench_{file.filename}"
+    content = await file.read()
+
+    await storage.write_block(filename, content)
+
+    latency = (time.time() - start) * 1000
+
+    BENCHMARK_LOGS.append({
+        "type": "upload",
+        "latency_ms": latency,
+        "size": len(content),
+        "timestamp": time.time(),
+        "node": config.NODE_ID
+    })
+
+    return {
+        "latency_ms": latency,
+        "size": len(content)
+    }
+
+@app.get("/api/benchmarks")
+async def get_benchmarks():
+    return {"data": BENCHMARK_LOGS}

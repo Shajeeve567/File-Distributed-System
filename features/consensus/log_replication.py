@@ -40,7 +40,7 @@ class ReplicationManager:
     async def _heartbeat_loop(self):
         """Send periodic heartbeats."""
         while self._running:
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
             
             if self.raft_node.state != "leader":
                 continue
@@ -120,7 +120,7 @@ class ReplicationManager:
             response = await self._client.post(
                 f"{peer_url}/raft/append_entries",
                 json=data,
-                timeout=2.0
+                timeout=0.2
             )
             if response.status_code == 200:
 
