@@ -2,6 +2,7 @@ import asyncio
 import time 
 import random 
 import logging 
+import os
 
 from typing import Optional, List, Dict
 from shared.models import LogEntry
@@ -34,13 +35,13 @@ class RaftNode:
         self.state = "follower" # follower, candidate, leader 
         self.leader_id: Optional[str] = None 
 
-        # timing (Randomized between 0.3 and 0.8 seconds to prevent split votes)
-        # Seed with a combination of ID and time to avoid identical sequences in sub-processes
-        random.seed(hash(node_id) + time.time())
-        self.election_timeout = random.uniform(1500, 3000) / 1000
+        # timing (Randomized between 0.3 and 0.6 seconds to prevent split votes)
+        # Seed with os.urandom to ensure unique seeds for separate processes started together
+        random.seed(int.from_bytes(os.urandom(4), "big"))
+        self.election_timeout = random.uniform(300, 600) / 1000
         
         # Initial jitter: Start with a random offset to ensure they don't timeout at the same time in Term 1
-        self.last_heartbeat = asyncio.get_event_loop().time() - random.uniform(0, 2)
+        self.last_heartbeat = asyncio.get_event_loop().time() - random.uniform(0, 0.5)
 
         self._lock = asyncio.Lock() 
 
@@ -55,7 +56,7 @@ class RaftNode:
         self.leader_id = leader_id 
         self.last_heartbeat = asyncio.get_event_loop().time() 
         # Reset timeout to stable range
-        self.election_timeout = random.uniform(1500, 3000) / 1000
+        self.election_timeout = random.uniform(300, 600) / 1000
 
         logger.info(f"[RAFT] Node {self.node_id} became FOLLOWER (term {self.current_term}, leader {leader_id})")
     
@@ -66,7 +67,7 @@ class RaftNode:
         self.voted_for = self.node_id
         self.last_heartbeat = asyncio.get_event_loop().time()
         # Reset timeout for new election attempt
-        self.election_timeout = random.uniform(1500, 3000) / 1000
+        self.election_timeout = random.uniform(300, 600) / 1000
 
         logger.info(f"[RAFT] Node {self.node_id} became a CANDIDATE for term {self.current_term}")
         
