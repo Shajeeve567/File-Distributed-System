@@ -56,6 +56,3 @@ class TestTimeSync:
         monitor = TimeSyncMonitor(max_offset_ms=50)
         assert monitor.max_offset_ms == 50
         assert monitor.current_fallback == FallbackStrategy.WARN_ONLY
-
-
-# Run with: pytest tests/integration/test_time_sync.py -v
