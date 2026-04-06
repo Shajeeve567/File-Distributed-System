@@ -99,9 +99,6 @@ async def stop_raft():
     
     logger.info("Raft shutdown complete")
 
-
-# ==================== WRAPPER FOR STUB COMPATIBILITY ====================
-
 class ConsensusEngineWrapper:
     """Wrapper to provide stub-like interface for the real implementation."""
     
@@ -120,6 +117,4 @@ class ConsensusEngineWrapper:
     async def register_commit_callback(self, cb):
         return await register_commit_callback(cb)
 
-
-# Export the consensus_engine object (replaces stub)
 consensus_engine = ConsensusEngineWrapper()

@@ -76,7 +76,7 @@ class RecoveryManager:
         pickle.dump(checkpoint, f)
       
       self.last_checkpoint_time = time.time()
-      logger.info(f"💾 Checkpoint saved: {len(blocks)} blocks (version {self.checkpoint_version})")
+      logger.info(f"Checkpoint saved: {len(blocks)} blocks (version {self.checkpoint_version})")
       
       # Cleanup old checkpoints
       self._cleanup_old_checkpoints()
@@ -125,7 +125,7 @@ class RecoveryManager:
       with open(latest_path, 'rb') as f:
         checkpoint = pickle.load(f)
       
-      logger.info(f"📂 Loaded checkpoint: {os.path.basename(latest_path)} ({checkpoint['block_count']} blocks)")
+      logger.info(f"Loaded checkpoint: {os.path.basename(latest_path)} ({checkpoint['block_count']} blocks)")
       return checkpoint
         
     except Exception as e:
@@ -216,12 +216,16 @@ class RecoveryManager:
           self.is_recovering = False
   
   #this is teh degraded functioning mode
-  async def system_status(self, live_nodes: List[str], required_quorum: int = 2) -> str:
+  async def system_status(self, live_nodes: List[str], required_quorum: int = None) -> str:
       """
       Determine system status based on live nodes
       Returns: "HEALTHY", "DEGRADED", or "FAILED"
       """
-      total_nodes = 3  # From config
+      from shared.config import config
+      total_nodes = len(config.ALL_NODES)
+      if required_quorum is None:
+          required_quorum = (total_nodes // 2) + 1
+          
       live_count = len(live_nodes)
       
       if live_count == total_nodes:

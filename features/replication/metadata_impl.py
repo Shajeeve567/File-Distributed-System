@@ -2,10 +2,12 @@ from typing import Optional
 from shared.models import FileMetadata
 from shared.interfaces import MetadataRepo
 
+from shared.config import config
+
 class InMemoryMetadataRepo(MetadataRepo):
     def __init__(self) -> None:
         self._files: dict[str, FileMetadata] = {}
-        self._default_nodes = ["S1", "S2", "S3"]
+        self._default_nodes = list(config.ALL_NODES.keys())
 
     def get_file_metadata(self, file_id: str) -> Optional[FileMetadata]:
         return self._files.get(file_id)

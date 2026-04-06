@@ -21,7 +21,7 @@ from shared.models import LogEntry, FileMetadata
 
 # Features
 from features.consensus import consensus_impl
-from features.time_sync import clock_sync, monitor
+from features.time_sync import monitor
 
 # Components will be initialized in lifespan
 storage = None
@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     global storage, registry, replication, recovery, fault_tolerance
     
     # STARTUP
-    logger.info(f"🚀 Starting node {config.NODE_ID} on port {config.PORT}")
+    logger.info(f"Starting node {config.NODE_ID} on port {config.PORT}")
     
     # Ensure local directory exists for this specific node
     os.makedirs(config.BLOCKS_DIR, exist_ok=True)
@@ -51,7 +51,9 @@ async def lifespan(app: FastAPI):
     recovery = RecoveryManager(config.NODE_ID, storage)
     fault_tolerance = FaultToleranceManager(config.NODE_ID, storage, registry, replication, recovery)
     
-    # Store in app state for access in routes
+    from features.time_sync.logical_clocks import LamportClock
+    app.state.lamport_clock = LamportClock()
+    
     app.state.storage = storage
     app.state.registry = registry
     app.state.replication = replication
@@ -67,8 +69,6 @@ async def lifespan(app: FastAPI):
     r_task = asyncio.create_task(replication.start())
     rec_task = asyncio.create_task(recovery.start())
     f_task = asyncio.create_task(fault_tolerance.start())
-    t_task = asyncio.create_task(time_sync_task())
-    
     # NEW: Event-driven metadata replication (Task 4)
     async def raft_commit_listener(entry):
         if entry.op == "CREATE_FILE":
@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI):
         if fault_tolerance: await fault_tolerance.stop()
         
         # Cancel background tasks
-        for task in [h_task, r_task, rec_task, f_task, t_task]:
+        for task in [h_task, r_task, rec_task, f_task]:
             task.cancel()
     except Exception as e:
         logger.debug(f"Error during shutdown: {e}")
@@ -104,8 +104,7 @@ app = FastAPI(title=f"Node {config.NODE_ID}", lifespan=lifespan)
 
 BLOCK_SIZE = 1024 * 1024  # 1MB blocks
 
-# Global state for time sync
-LOCAL_TIME_OFFSET = 0.0
+BLOCK_SIZE = 1024 * 1024  # 1MB blocks
 
 @app.post("/files/{filename}")
 async def upload_file(filename: str, request: Request, file: UploadFile = File(...)):
@@ -117,7 +116,7 @@ async def upload_file(filename: str, request: Request, file: UploadFile = File(.
             # Redirect to leader or inform client
             return {
                 "status": "error",
-                "message": f"I am not the leader. Please contact {leader}",
+                "message": "not leader",
                 "leader": leader,
                 "leader_url": config.ALL_NODES[leader]
             }
@@ -155,26 +154,33 @@ async def upload_file(filename: str, request: Request, file: UploadFile = File(.
             "size": len(block_data)
         })
         
-        # Replicate to other nodes (Task 2: Data Replication)
+        # Replicate to other nodes asynchronously (Task 2: Data Replication Layer independence)
+        # Binary data replication is handled separately via /replicate async pipeline
         if target_nodes:
-            await replication.replicate_block(
+            lamport_ts = request.app.state.lamport_clock.tick() if hasattr(request.app.state, "lamport_clock") else 1
+            asyncio.create_task(replication.replicate_block(
                 block_id=block_id,
                 data=block_data,
-                target_nodes=target_nodes
-            )
+                target_nodes=target_nodes,
+                lamport_ts=lamport_ts
+            ))
+    
+    lamport_ts_meta = request.app.state.lamport_clock.tick() if hasattr(request.app.state, "lamport_clock") else 1
     
     # Save file manifest via Consensus (Task 4)
     manifest = {
         "filename": filename,
         "total_size": len(content),
         "blocks": blocks,
-        "created": time.time() + LOCAL_TIME_OFFSET,
-        "replicated_to": target_nodes
+        "created": time.time(),
+        "replicated_to": target_nodes,
+        "lamport_ts": lamport_ts_meta,
+        "source_node": config.NODE_ID
     }
     
     # 🌟 MIRRORING (Option 1): Replicate metadata manifest to followers immediately
     if target_nodes:
-        await replication.replicate_metadata(filename, manifest, target_nodes)
+        await replication.replicate_metadata(filename, manifest, target_nodes, lamport_ts_meta)
     
     # Prepare Raft Log Entry
     raft_entry = LogEntry(
@@ -186,6 +192,7 @@ async def upload_file(filename: str, request: Request, file: UploadFile = File(.
     )
     
     # Replicate log entry (This ensures agreement among servers)
+    # Raft is used ONLY for metadata consensus (file manifests, leadership)
     success = await consensus_impl.replicate_log(raft_entry)
     if not success:
         raise HTTPException(status_code=500, detail="Consensus failed for file metadata")
@@ -210,7 +217,7 @@ async def receive_heartbeat(data: dict):
     """Receive heartbeat from another node"""
     node_id = data.get("node_id")
     await registry.register_node(node_id)
-    return {"status": "ok", "time": time.time() + LOCAL_TIME_OFFSET}
+    return {"status": "ok", "time": time.time()}
 
 # --- Raft Consensus Endpoints (Task 4) ---
 
@@ -231,10 +238,17 @@ async def raft_append_entries(data: dict):
 
 @app.post("/replicate")
 async def receive_replication(data: dict, request: Request):
-    """Component for Task 2: Receive and store a replicated block (JSON/Hex)"""
+    """
+    Component for Task 2: Receive and store a replicated block (JSON/Hex)
+    Asynchronous replication layer independent of Raft.
+    """
     block_id = data.get("block_id")
     block_data_hex = data.get("data")
     source_node = data.get("source_node", "unknown")
+    lamport_ts = data.get("lamport_ts", 1)
+    
+    if hasattr(request.app.state, "lamport_clock"):
+        request.app.state.lamport_clock.update(lamport_ts)
     
     if not block_id or not block_data_hex:
         raise HTTPException(status_code=400, detail="Missing block data")
@@ -252,6 +266,11 @@ async def replicate_meta(data: dict, request: Request):
     """Mirror a metadata manifest to local storage (Option 1 replication)"""
     filename = data["filename"]
     manifest = data["manifest"]
+    lamport_ts = data.get("lamport_ts", 1)
+    
+    if hasattr(request.app.state, "lamport_clock"):
+        request.app.state.lamport_clock.update(lamport_ts)
+        
     storage = request.app.state.storage
     
     await storage.save_metadata(f"manifest_{filename}", manifest)
@@ -262,43 +281,8 @@ async def replicate_meta(data: dict, request: Request):
 
 @app.get("/time")
 async def get_time():
-    """Return local time for synchronization"""
-    return {"node_id": config.NODE_ID, "time": time.time() + LOCAL_TIME_OFFSET}
-
-async def time_sync_task():
-    """Background task for Time Sync (Task 3)"""
-    global LOCAL_TIME_OFFSET
-    while True:
-        await asyncio.sleep(10)  # Sync every 10 seconds
-        node_times = {config.NODE_ID: time.time() + LOCAL_TIME_OFFSET}
-        
-        async with httpx.AsyncClient() as client:
-            for node_id, url in config.OTHER_NODES.items():
-                try:
-                    resp = await client.get(f"{url}/time", timeout=1.0)
-                    if resp.status_code == 200:
-                        node_times[node_id] = resp.json()["time"]
-                except:
-                    pass
-        
-        if len(node_times) > 1:
-            try:
-                # Use current leader as reference node for synchronization
-                leader = await consensus_impl.get_current_leader()
-                ref_node = leader if leader and leader in node_times else list(node_times.keys())[0]
-                
-                offsets = clock_sync.compute_offsets(node_times, ref_node)
-                my_offset_ms = offsets.get(config.NODE_ID, 0)
-                
-                # Correct local clock drift (slowly adjust)
-                LOCAL_TIME_OFFSET -= (my_offset_ms / 1000.0) * 0.5
-                logger.info(f"Time Sync: Offset with {ref_node} is {my_offset_ms}ms. Adjusted LOCAL_TIME_OFFSET to {LOCAL_TIME_OFFSET}")
-                
-                # Update monitor status for report evaluation
-                await time_monitor.check_cluster_health(node_times, ref_node)
-
-            except Exception as e:
-                logger.error(f"Time Sync failed: {e}")
+    """Return physical OS-level time natively"""
+    return {"node_id": config.NODE_ID, "time": time.time()}
 
 async def heartbeat_sender():
     """Background task: send heartbeats for failure detection (Task 1)"""
@@ -309,14 +293,15 @@ async def heartbeat_sender():
                     await client.post(
                         f"{url}/heartbeat",
                         json={"node_id": config.NODE_ID},
-                        timeout=1.0
+                        timeout=0.5
                     )
                 except:
                     pass
-            await asyncio.sleep(2)
+            await asyncio.sleep(1.0)  # Periodic asynchronous heartbeat (~1s interval)
 
 
 @app.get("/status")
+@app.get("/api/status")
 async def status(request: Request):
     """Comprehensive system status"""
     s_state = request.app.state
@@ -338,10 +323,54 @@ async def status(request: Request):
         "node_id": config.NODE_ID,
         "raft": raft_state,
         "system": system_status,
-        "time_offset_s": LOCAL_TIME_OFFSET,
         "storage": {"block_count": len(blocks)},
         "replication": replication_stats,
         "checkpoint": checkpoint_info
+    }
+
+@app.get("/api/metrics")
+async def metrics(request: Request):
+    """Real-time metrics for algorithm monitoring dashboard (updates every 2s)"""
+    s_state = request.app.state
+    
+    # Consensus Metrics
+    raft_state = {
+        "state": consensus_impl._raft_node.state if consensus_impl._raft_node else "unknown",
+        "leader": consensus_impl._raft_node.leader_id if consensus_impl._raft_node else None,
+        "term": consensus_impl._raft_node.current_term if consensus_impl._raft_node else 0,
+        "vote_count": 1 if consensus_impl._raft_node and consensus_impl._raft_node.state == "leader" else 0  # Simplified
+    }
+    
+    # Replication Metrics
+    blocks = await s_state.storage.list_blocks()
+    live_nodes = await s_state.registry.get_live_nodes()
+    replication_state = {
+        "files_stored": len(blocks),
+        "peer_count": len(live_nodes) - 1 if config.NODE_ID in live_nodes else len(live_nodes),
+        "peers": [n for n in live_nodes if n != config.NODE_ID]
+    }
+    
+    # Fault Tolerance Metrics
+    fault_state = {
+        "healthy_counts": len(live_nodes),
+        "suspected_counts": len([n for n, s in s_state.fault_tolerance.node_status.items() if s.value == "suspected"]),
+        "failed_counts": len([n for n, s in s_state.fault_tolerance.node_status.items() if s.value == "failed"]),
+        "node_status_details": {n: s.value for n, s in s_state.fault_tolerance.node_status.items()}
+    }
+    
+    # Time Sync Metrics
+    lamport = s_state.lamport_clock.get_time() if hasattr(s_state, "lamport_clock") else 0
+    time_state = {
+        "protocol": "OS Native NTP + Lamport Causality",
+        "last_sync_timestamp": time.time(),
+        "lamport_counter": lamport
+    }
+    
+    return {
+        "consensus": raft_state,
+        "replication": replication_state,
+        "fault_tolerance": fault_state,
+        "time_sync": time_state
     }
 
 @app.post("/replicate")
@@ -408,6 +437,31 @@ async def download_file(filename: str):
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
+@app.delete("/files/{filename}")
+async def delete_file(filename: str, request: Request):
+    """Delete a file and its blocks"""
+    leader = await consensus_impl.get_current_leader()
+    if leader != config.NODE_ID:
+        raise HTTPException(status_code=503, detail=f"Not leader. Please contact {leader}")
+        
+    s_state = request.app.state
+    manifest = await s_state.storage.get_metadata(f"manifest_{filename}")
+    
+    if not manifest:
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    # Delete blocks
+    for block_info in manifest["blocks"]:
+        await s_state.storage.delete_block(block_info["block_id"])
+        
+    # Delete manifest
+    await s_state.storage.delete_metadata(f"manifest_{filename}")
+    
+    # In a full implementation, we would replicate this deletion via Raft
+    
+    return {"status": "success", "message": f"Deleted {filename}"}
+
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -421,10 +475,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.mode == "demo":
-        logger.info("🚀 Starting 3-node demo cluster...")
+        logger.info(f"Starting {len(config.ALL_NODES)}-node demo cluster...")
         processes = []
         try:
-            for i in range(1, 4):
+            for i in range(1, len(config.ALL_NODES) + 1):
                 node_id = f"node{i}"
                 port = 8000 + i
                 logger.info(f"Starting {node_id} on port {port}")

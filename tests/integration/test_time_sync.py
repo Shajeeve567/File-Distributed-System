@@ -2,7 +2,7 @@
 
 import pytest
 from shared.models import ClockStatus
-from feature.time_sync.clock_sync import compute_offsets, assess_cluster_health
+
 from feature.time_sync.fallback import handle_time_sync_failure, FallbackStrategy
 from feature.time_sync.monitor import TimeSyncMonitor
 

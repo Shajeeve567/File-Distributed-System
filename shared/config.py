@@ -6,11 +6,13 @@ class Config:
         # This resolves to D:\Computer Science\year 2\2nd semester\DS\assignment\FaultTolerance
         self.BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.HOST = "127.0.0.1"
-        self.REPLICATION_FACTOR = 3
+        self.REPLICATION_FACTOR = 5
         self.ALL_NODES = {
             "node1": "http://127.0.0.1:8001",
             "node2": "http://127.0.0.1:8002",
-            "node3": "http://127.0.0.1:8003"
+            "node3": "http://127.0.0.1:8003",
+            "node4": "http://127.0.0.1:8004",
+            "node5": "http://127.0.0.1:8005"
         }
 
     @property

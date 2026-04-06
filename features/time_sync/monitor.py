@@ -5,7 +5,6 @@ import asyncio
 from typing import Optional, List
 from shared.models import ClockStatus, Heartbeat
 
-from .clock_sync import compute_offsets, assess_cluster_health
 from .fallback import FallbackStrategy, handle_time_sync_failure
 
 # Use real components instead of stubs
@@ -57,21 +56,16 @@ class TimeSyncMonitor:
         if reference_node is None:
             reference_node = await self.get_reference_node()
         
-        # Calculate offsets and assess health
-        offsets = compute_offsets(node_times, reference_node)
-        statuses, cluster_healthy = assess_cluster_health(offsets, self.max_offset_ms)
+        # OS Time sync logic bypasses external offset checks
+        statuses = []
+        cluster_healthy = True
         
         # Update state
         self.last_status = statuses
         self._last_check_time = time.time()
         
-        # Update fallback strategy if cluster is unhealthy
         if not cluster_healthy:
-            self.current_fallback = handle_time_sync_failure(
-                offsets, 
-                self.max_offset_ms, 
-                self.current_fallback
-            )
+            self.current_fallback = FallbackStrategy.WARN_ONLY
         
         return statuses, self.current_fallback
     

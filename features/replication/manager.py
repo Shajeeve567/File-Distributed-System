@@ -23,40 +23,42 @@ class ReplicationManager:
             "retries": 0
         }
         
-        logger.info(f"ReplicationManager initialized for {node_id}")
+        logger.info(f"[REPLICATION] ReplicationManager initialized for {node_id}")
 
     async def start(self):
         """Start background replication processor"""
         self.running = True
         asyncio.create_task(self._process_queue())
-        logger.info("Replication processor started")
+        logger.info("[REPLICATION] Replication processor started")
 
     async def stop(self):
         """Stop replication manager"""
         self.running = False
         await self.client.aclose()
 
-    async def replicate_block(self, block_id: str, data: bytes, target_nodes: List[str]):
+    async def replicate_block(self, block_id: str, data: bytes, target_nodes: List[str], lamport_ts: int = 1):
         """Queue a binary block for replication"""
         await self.replication_queue.put({
             "type": "BLOCK",
             "block_id": block_id,
             "data": data,
             "targets": target_nodes,
-            "attempts": 0
+            "attempts": 0,
+            "lamport_ts": lamport_ts
         })
-        logger.info(f"💾 Queued block replication for {block_id} to {len(target_nodes)} nodes")
+        logger.info(f"[REPLICATION] 💾 Queued block replication for {block_id} to {len(target_nodes)} nodes")
 
-    async def replicate_metadata(self, filename: str, manifest: dict, target_nodes: List[str]):
+    async def replicate_metadata(self, filename: str, manifest: dict, target_nodes: List[str], lamport_ts: int = 1):
         """Queue a metadata manifest for replication"""
         await self.replication_queue.put({
             "type": "METADATA",
             "filename": filename,
             "manifest": manifest,
             "targets": target_nodes,
-            "attempts": 0
+            "attempts": 0,
+            "lamport_ts": lamport_ts
         })
-        logger.info(f"📋 Queued metadata replication for {filename} to {len(target_nodes)} nodes")
+        logger.info(f"[REPLICATION] 📋 Queued metadata replication for {filename} to {len(target_nodes)} nodes")
 
     async def _process_queue(self):
         """Background worker that processes replication queue"""
@@ -109,13 +111,14 @@ class ReplicationManager:
                     json={
                         "block_id": block_id,
                         "data": data.hex(),
-                        "source_node": config.NODE_ID
+                        "source_node": config.NODE_ID,
+                        "lamport_ts": task.get("lamport_ts", 1)
                     },
                     timeout=2.0
                 )
                 results[peer_id] = resp.status_code == 200
                 if results[peer_id]:
-                    logger.info(f"✨ Replicated block {block_id} to {peer_id}")
+                    logger.info(f"[REPLICATION] ✨ Replicated block {block_id} to {peer_id}")
             except Exception as e:
                 logger.error(f"Failed to replicate block {block_id} to {peer_id}: {e}")
                 results[peer_id] = False
@@ -137,13 +140,14 @@ class ReplicationManager:
                     f"{peer_url}/replicate_meta",
                     json={
                         "filename": filename,
-                        "manifest": manifest
+                        "manifest": manifest,
+                        "lamport_ts": task.get("lamport_ts", 1)
                     },
                     timeout=2.0
                 )
                 results[peer_id] = resp.status_code == 200
                 if results[peer_id]:
-                    logger.info(f"✨ Mirrored metadata {filename} to {peer_id}")
+                    logger.info(f"[REPLICATION] ✨ Mirrored metadata {filename} to {peer_id}")
             except Exception as e:
                 logger.error(f"Failed to replicate metadata {filename} to {peer_id}: {e}")
                 results[peer_id] = False

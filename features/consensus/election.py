@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import httpx
+import random
 from typing import List, Optional
 from features.consensus.raft_node import RaftNode
 from shared.config import config
@@ -47,10 +48,13 @@ class ElectionManager:
                     self.raft_node.state != "leader" and
                     await self.raft_node.should_start_election()
                 ):
-                    logger.info(f"⚡ ELECTION TRIGGERED for {self.raft_node.node_id}")
+                    logger.info(f"ELECTION TRIGGERED for {self.raft_node.node_id}. Applying random.uniform timeout...")
+                    import random
+                    # Use random.uniform() for election timeout randomization to prevent split-brain cascades
+                    await asyncio.sleep(random.uniform(0.15, 0.35))
                     asyncio.create_task(self.start_election())
             except Exception as e:
-                logger.error(f"❌ Election loop error on {self.raft_node.node_id}: {e}", exc_info=True)
+                logger.error(f"Election loop error on {self.raft_node.node_id}: {e}", exc_info=True)
                 await asyncio.sleep(1.0) # Backoff
 
 
@@ -185,16 +189,16 @@ class ElectionManager:
                         self.raft_node.voted_for = candidate_id
                         await self.raft_node.reset_election_timeout()
                         logger.info(
-                            f"✅ {self.raft_node.node_id} voted for {candidate_id} (term {term})"
+                            f"{self.raft_node.node_id} voted for {candidate_id} (term {term})"
                         )
                     else:
                         reason = "Candidate log not up to date"
 
             if not vote_granted:
-                logger.info(f"❌ {self.raft_node.node_id} denied vote to {candidate_id}: {reason}")
+                logger.info(f"{self.raft_node.node_id} denied vote to {candidate_id}: {reason}")
 
             return {
                 "term": self.raft_node.current_term,
                 "vote_granted": vote_granted,
             }
-
+

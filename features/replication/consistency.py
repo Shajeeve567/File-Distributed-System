@@ -1,8 +1,11 @@
-def write_quorum_required(replication_factor: int = 3) -> int:
+from shared.config import config
+
+def write_quorum_required(replication_factor: int = None) -> int:
     """
     Basic majority rule.
-    For 3 replicas -> 2 required.
     """
+    if replication_factor is None:
+        replication_factor = config.REPLICATION_FACTOR
     return (replication_factor // 2) + 1
 
 

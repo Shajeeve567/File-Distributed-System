@@ -34,10 +34,10 @@ class RaftNode:
         self.state = "follower" # follower, candidate, leader 
         self.leader_id: Optional[str] = None 
 
-        # timing (Randomized between 3 and 6 seconds to prevent split votes)
+        # timing (Randomized between 0.3 and 0.8 seconds to prevent split votes)
         # Seed with a combination of ID and time to avoid identical sequences in sub-processes
         random.seed(hash(node_id) + time.time())
-        self.election_timeout = random.uniform(3000, 6000) / 1000
+        self.election_timeout = random.uniform(1500, 3000) / 1000
         
         # Initial jitter: Start with a random offset to ensure they don't timeout at the same time in Term 1
         self.last_heartbeat = asyncio.get_event_loop().time() - random.uniform(0, 2)
@@ -55,9 +55,9 @@ class RaftNode:
         self.leader_id = leader_id 
         self.last_heartbeat = asyncio.get_event_loop().time() 
         # Reset timeout to stable range
-        self.election_timeout = random.uniform(3000, 6000) / 1000
+        self.election_timeout = random.uniform(1500, 3000) / 1000
 
-        logger.info(f"Node {self.node_id} became FOLLOWER (term {self.current_term}, leader {leader_id})")
+        logger.info(f"[RAFT] Node {self.node_id} became FOLLOWER (term {self.current_term}, leader {leader_id})")
     
     async def become_candidate(self): 
         # change into candidate state 
@@ -66,9 +66,9 @@ class RaftNode:
         self.voted_for = self.node_id
         self.last_heartbeat = asyncio.get_event_loop().time()
         # Reset timeout for new election attempt
-        self.election_timeout = random.uniform(3000, 6000) / 1000
+        self.election_timeout = random.uniform(1500, 3000) / 1000
 
-        logger.info(f"Node {self.node_id} became a CANDIDATE for term {self.current_term}")
+        logger.info(f"[RAFT] Node {self.node_id} became a CANDIDATE for term {self.current_term}")
         
     async def become_leader(self): 
         # become a leader
@@ -81,7 +81,7 @@ class RaftNode:
             self.next_index[peer] = last_log_index + 1
             self.match_index[peer] = 0
         
-        logger.info(f"Node {self.node_id} became LEADER for term {self.current_term}")
+        logger.info(f"[RAFT] Node {self.node_id} became LEADER for term {self.current_term}")
         
     # leader only operation
     async def append_entry(self, entry: LogEntry) -> bool:
@@ -93,7 +93,7 @@ class RaftNode:
         entry.index = len(self.log) + 1
         self.log.append(entry)
 
-        logger.info(f"Leader has appended the entry: {entry.index}")
+        logger.info(f"[RAFT] Leader has appended the entry: {entry.index}")
         if not self.peer_ids:
 
             self.commit_index = len(self.log)
@@ -110,20 +110,20 @@ class RaftNode:
         if not self.peer_ids:
             if len(self.log) > self.commit_index:
                 self.commit_index = len(self.log)
-                logger.info(f"✅ No peers, committed up to index {self.commit_index}")
+                logger.info(f"[RAFT] No peers, committed up to index {self.commit_index}")
 
         matches = list(self.match_index.values()) + [len(self.log)]
         matches.sort(reverse=True)
         majority_index = matches[len(matches) // 2]
 
-        logger.info(f"🎯 Update commit: matches={matches}, majority_index={majority_index}, current_commit={self.commit_index}")
+        logger.info(f"Update commit: matches={matches}, majority_index={majority_index}, current_commit={self.commit_index}")
 
         if majority_index > self.commit_index:
             if majority_index > 0 and self.log[majority_index - 1].term == self.current_term:
                 self.commit_index = majority_index
 
-                logger.info(f"✅✅✅ COMMIT UPDATED to index {self.commit_index} ✅✅✅")
-                logger.info(f"Leader committed up to index {self.commit_index}")
+                logger.info(f"[RAFT] COMMIT UPDATED to index {self.commit_index}")
+                logger.info(f"[RAFT] Leader committed up to index {self.commit_index}")
 
                 await self._apply_committed_entries()
     
@@ -133,7 +133,7 @@ class RaftNode:
             self.last_applied += 1
             entry = self.log[self.last_applied - 1]
 
-            logger.info(f"📈 [NODE {self.node_id}] Applying committed entry {self.last_applied}: {entry.op}")
+            logger.info(f"[RAFT] [NODE {self.node_id}] Applying committed entry {self.last_applied}: {entry.op}")
 
             # Execute callbacks
             for cb in self.commit_callbacks:
@@ -163,8 +163,8 @@ class RaftNode:
         # Assume caller holds lock
         # Consistent with monitor loop
         self.last_heartbeat = asyncio.get_event_loop().time()
-        # 3.0s - 6.0s randomized range
-        self.election_timeout = random.uniform(3000, 6000) / 1000
+        # 0.3s - 0.8s randomized range
+        self.election_timeout = random.uniform(1500, 3000) / 1000
 
 
 

@@ -1,17 +1,14 @@
-def next_version_for_write(current_version: int) -> int:
-    return current_version + 1
-
-
-def is_stale_write(expected_version: int, current_version: int) -> bool:
-    return expected_version < current_version
-
-
-def resolve_conflict(current_version: int, incoming_version: int, incoming_ts: float) -> int:
+def resolve_conflict(local_lamport: int, incoming_lamport: int, local_node_id: str, incoming_node_id: str) -> bool:
     """
-    Simple policy:
-    - newer version wins
-    - if equal version somehow appears, accept incoming as next version
+    Deterministic Conflict Resolution:
+    - Higher Lamport timestamp wins
+    - If equal, lexicographically larger Node ID wins
+    
+    Guarantees deterministic convergence across all nodes without manual conflict resolution.
+    Returns True if incoming data wins, False if local data wins.
     """
-    if incoming_version > current_version:
-        return incoming_version
-    return current_version + 1
+    if incoming_lamport > local_lamport:
+        return True
+    elif incoming_lamport == local_lamport:
+        return incoming_node_id > local_node_id
+    return False

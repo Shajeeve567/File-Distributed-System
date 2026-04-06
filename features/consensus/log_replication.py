@@ -57,14 +57,14 @@ class ReplicationManager:
 
     async def replicate_log(self, entry: LogEntry) -> bool:
         """Replicate a log entry to followers."""
-        logger.info(f"🔵 replicate_log: starting for entry {entry.index}")
+        logger.info(f"replicate_log: starting for entry {entry.index}")
         
         # Append locally
         if not await self.raft_node.append_entry(entry):
-            logger.error("🔴 Failed to append entry locally")
+            logger.error("Failed to append entry locally")
             return False
         
-        logger.info(f"🟢 Entry {entry.index} appended locally")
+        logger.info(f"Entry {entry.index} appended locally")
         
         # Send to followers
         await self._send_heartbeats()
@@ -78,11 +78,11 @@ class ReplicationManager:
             
             async with self.raft_node._lock:
                 if entry.index <= self.raft_node.commit_index:
-                    logger.info(f"✅ Entry {entry.index} committed!")
+                    logger.info(f"Entry {entry.index} committed!")
                     return True
             
             if asyncio.get_event_loop().time() - start > timeout:
-                logger.error(f"❌ Timeout waiting for entry {entry.index} to commit")
+                logger.error(f"Timeout waiting for entry {entry.index} to commit")
                 return False
 
     async def _append_entries(self, peer_id: str, is_heartbeat: bool = False) -> bool:
@@ -179,7 +179,7 @@ class ReplicationManager:
                         old_commit = self.raft_node.commit_index
                         self.raft_node.commit_index = min(leader_commit, len(self.raft_node.log))
                         if self.raft_node.commit_index > old_commit:
-                            logger.info(f"📈 [NODE {self.raft_node.node_id}] Commit index updated to {self.raft_node.commit_index}")
+                            logger.info(f"[NODE {self.raft_node.node_id}] Commit index updated to {self.raft_node.commit_index}")
                             await self.raft_node._apply_committed_entries()
                     
                     success = True
@@ -188,4 +188,4 @@ class ReplicationManager:
                 "term": self.raft_node.current_term, 
                 "success": success, 
                 "match_index": len(self.raft_node.log)
-            }
+            }
