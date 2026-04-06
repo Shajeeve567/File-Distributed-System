@@ -5,7 +5,7 @@ import json
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
-from utils import logger
+from shared.utils import logger
 
 class RecoveryManager:
   """Manages recovery for failed nodes and checkpointing"""
@@ -76,7 +76,7 @@ class RecoveryManager:
         pickle.dump(checkpoint, f)
       
       self.last_checkpoint_time = time.time()
-      logger.info(f"💾 Checkpoint saved: {len(blocks)} blocks (version {self.checkpoint_version})")
+      logger.info(f"Checkpoint saved: {len(blocks)} blocks (version {self.checkpoint_version})")
       
       # Cleanup old checkpoints
       self._cleanup_old_checkpoints()
@@ -125,7 +125,7 @@ class RecoveryManager:
       with open(latest_path, 'rb') as f:
         checkpoint = pickle.load(f)
       
-      logger.info(f"📂 Loaded checkpoint: {os.path.basename(latest_path)} ({checkpoint['block_count']} blocks)")
+      logger.info(f"Loaded checkpoint: {os.path.basename(latest_path)} ({checkpoint['block_count']} blocks)")
       return checkpoint
         
     except Exception as e:
@@ -144,12 +144,17 @@ class RecoveryManager:
     
     # Find all files that should be on the failed node
     for file_id, nodes in file_map.items():
+      # Skip internal metadata keys like _total_blocks, _all_nodes
+      if file_id.startswith("_") or not isinstance(nodes, list):
+          continue
+          
       if failed_node_id in nodes:
           # This file needs to be restored
           # Find other nodes that have this file
           sources = [n for n in nodes if n != failed_node_id]
           if sources:
             recovery_plan[file_id] = sources
+
     
     logger.info(f"Recovery plan: {len(recovery_plan)} files need restoration")
     return recovery_plan
@@ -162,7 +167,7 @@ class RecoveryManager:
       logger.info(f"Executing recovery for node {recovering_node}")
       
       try:
-          from config import config
+          from shared.config import config
           import httpx
           
           recovered = 0
@@ -211,12 +216,16 @@ class RecoveryManager:
           self.is_recovering = False
   
   #this is teh degraded functioning mode
-  async def system_status(self, live_nodes: List[str], required_quorum: int = 2) -> str:
+  async def system_status(self, live_nodes: List[str], required_quorum: int = None) -> str:
       """
       Determine system status based on live nodes
       Returns: "HEALTHY", "DEGRADED", or "FAILED"
       """
-      total_nodes = 3  # From config
+      from shared.config import config
+      total_nodes = len(config.ALL_NODES)
+      if required_quorum is None:
+          required_quorum = (total_nodes // 2) + 1
+          
       live_count = len(live_nodes)
       
       if live_count == total_nodes:

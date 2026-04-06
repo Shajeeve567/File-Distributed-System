@@ -9,13 +9,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def generate_block_id(filename, part_number):
-  """Create unique ID for each file block"""
+  """Create unique ID for each file block using SHA256"""
   unique = f"{filename}_{part_number}_{uuid.uuid4().hex[:8]}"
-  return hashlib.md5(unique.encode()).hexdigest()
+  return hashlib.sha256(unique.encode()).hexdigest()
 
 def calculate_checksum(data):
-  """Verify data integrity"""
-  return hashlib.md5(data).hexdigest()
+  """Verify data integrity using SHA256"""
+  return hashlib.sha256(data).hexdigest()
 
 def get_timestamp():
   """Current time for versioning"""

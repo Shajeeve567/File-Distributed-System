@@ -7,7 +7,9 @@ import json
 NODES = {
     "Node 1 (8001)": "http://127.0.0.1:8001",
     "Node 2 (8002)": "http://127.0.0.1:8002",
-    "Node 3 (8003)": "http://127.0.0.1:8003"
+    "Node 3 (8003)": "http://127.0.0.1:8003",
+    "Node 4 (8004)": "http://127.0.0.1:8004",
+    "Node 5 (8005)": "http://127.0.0.1:8005"
 }
 
 st.set_page_config(page_title="Distributed File System", page_icon="🗄️", layout="wide")
@@ -93,17 +95,17 @@ with tab1:
         time_sync = data.get("time_sync", {})
         
         st.subheader("Consensus (Raft)")
-        m1, m2, m3 = st.columns(3)
+        m1, m2 = st.columns(2)
         m1.metric("Current Leader", consensus.get("leader", "None"), f"Term: {consensus.get('term', 0)}")
         m2.metric("Target Node State", consensus.get("state", "Unknown").upper())
-        m3.metric("Vote Count", consensus.get("vote_count", 0))
+        # m3.metric("Vote Count", consensus.get("vote_count", 0))
         
         st.divider()
         st.subheader("Data Replication & Storage")
-        m1, m2, m3 = st.columns(3)
+        m1, m2 = st.columns(2)
         m1.metric("Total Files/Blocks Stored", replication.get("files_stored", 0))
         m2.metric("Connected Peers", replication.get("peer_count", 0))
-        m3.write("**Peer List:**")
+        # m3.write("**Peer List:**")
         st.write(replication.get("peers", []))
         
         st.divider()
@@ -112,8 +114,8 @@ with tab1:
         m1.metric("Healthy Nodes", fault.get("healthy_counts", 0))
         m2.metric("Failed Nodes", fault.get("failed_counts", 0))
         
-        with st.expander("View Node Status Details"):
-            st.json(fault.get("node_status_details", {}))
+        # with st.expander("View Node Status Details"):
+        #     st.json(fault.get("node_status_details", {}))
             
         st.divider()
         st.subheader("Time Synchronization")

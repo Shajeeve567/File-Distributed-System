@@ -2,9 +2,12 @@ from shared.dependencies import metadata_repo, node_health_gateway, storage_data
 from shared.models import FileMetadata, ReplicationResult, WriteRequest, WriteResult
 from features.replication.conflicts import next_version_for_write
 from features.replication.consistency import is_write_successful, write_quorum_required
+from shared.config import config
 
 
-def choose_valid_replica_nodes(file_id: str, requested_factor: int = 3) -> list[str]:
+def choose_valid_replica_nodes(file_id: str, requested_factor: int = None) -> list[str]:
+    if requested_factor is None:
+        requested_factor = config.REPLICATION_FACTOR
     candidate_nodes = metadata_repo.choose_replica_nodes(file_id, requested_factor)
     live_nodes = set(node_health_gateway.list_live_nodes())
     return [node_id for node_id in candidate_nodes if node_id in live_nodes]
@@ -44,7 +47,7 @@ def handle_write(req: WriteRequest, leader_id: str = "COORDINATOR_1") -> WriteRe
         )
 
     replication_result = replicate_to_nodes(req, replica_nodes, version=new_version)
-    required_acks = write_quorum_required(replication_factor=3)
+    required_acks = write_quorum_required(replication_factor=config.REPLICATION_FACTOR)
     success = is_write_successful(replication_result.ack_count, required_acks)
 
     if not success:

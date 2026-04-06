@@ -2,10 +2,10 @@ import asyncio
 import time
 from enum import Enum
 from typing import Dict, List, Optional
-from utils import logger
+from shared.utils import logger
 
 class NodeStatus(Enum):
-    ACTIVE = "active"
+    HEALTHY = "healthy"
     SUSPECTED = "suspected"
     FAILED = "failed"
     RECOVERING = "recovering"
@@ -24,8 +24,9 @@ class FaultToleranceManager:
         self.recovery = recovery
         
         self.node_status: Dict[str, NodeStatus] = {}
-        self.failure_timeout = 6  # seconds (3 missed heartbeats)
-        self.heartbeat_interval = 2  # seconds
+        self.suspect_timeout = 2  # ~2 seconds (1 missed heartbeat)
+        self.failure_timeout = 4  # ~4 seconds (3 missed heartbeats)
+        self.heartbeat_interval = 1  # 1 second loop wait
         
         self.running = True
         self._start_time = time.time()
@@ -49,47 +50,61 @@ class FaultToleranceManager:
     async def _monitor_failures(self):
         """Monitor for node failures"""
         while self.running:
-            await asyncio.sleep(1)
+            await asyncio.sleep(self.heartbeat_interval)
             
-            # Get current live nodes from registry
-            live_nodes = await self.registry.get_live_nodes()
+            # Get current live nodes based purely on explicit timestamps
+            now = time.time()
+            # Direct lock-free access isn't perfect, but checking registry timestamps is better
             
-            # Check each node
             for node_id in self._get_all_nodes():
                 if node_id == self.node_id:
                     continue
                 
-                if node_id in live_nodes:
-                    # Node is alive
-                    if self.node_status.get(node_id) != NodeStatus.ACTIVE:
-                        # Node was previously dead, now recovered
-                        logger.info(f"✅ Node {node_id} is BACK ONLINE")
-                        self.node_status[node_id] = NodeStatus.ACTIVE
-                        
-                        # Trigger recovery
-                        file_map = await self._get_file_map()
-                        await self.recovery.handle_node_recovery(node_id, file_map)
-                else:
-                    # Node not in live_nodes - might be failed
-                    current_status = self.node_status.get(node_id, NodeStatus.ACTIVE)
-                    
-                    if current_status == NodeStatus.ACTIVE:
-                        # First missed heartbeat - mark suspected
+                last_seen_time = self.registry.live_nodes.get(node_id, 0)
+                time_since_last_seen = now - last_seen_time
+                current_status = self.node_status.get(node_id, NodeStatus.HEALTHY)
+                
+                # If recently seen within suspect timeout
+                if time_since_last_seen <= self.suspect_timeout:
+                    if current_status != NodeStatus.HEALTHY:
+                        if current_status == NodeStatus.FAILED:
+                            # Node was previously dead, now recovered
+                            logger.info(f"[FAULT] Node {node_id} is BACK ONLINE and RECOVERING")
+                            self.node_status[node_id] = NodeStatus.RECOVERING
+                            
+                            # Trigger asynchronous non-blocking recovery
+                            asyncio.create_task(self._run_async_recovery(node_id))
+                        elif current_status == NodeStatus.SUSPECTED:
+                            self.node_status[node_id] = NodeStatus.HEALTHY
+                            logger.info(f"[FAULT] Node {node_id} recovered from SUSPECTED to HEALTHY")
+                
+                # If missed exactly ~1 heartbeat boundaries
+                elif self.suspect_timeout < time_since_last_seen <= self.failure_timeout:
+                    if current_status == NodeStatus.HEALTHY:
                         self.node_status[node_id] = NodeStatus.SUSPECTED
-                        logger.warning(f"⚠️ Node {node_id} is SUSPECTED (missed heartbeat)")
-                        
-                    elif current_status == NodeStatus.SUSPECTED:
-                        # Second missed heartbeat - mark failed
+                        logger.warning(f"[FAULT] Node {node_id} is SUSPECTED (missed heartbeat)")
+                
+                # If missed >= 3 consecutive bounds
+                elif time_since_last_seen > self.failure_timeout:
+                    if current_status == NodeStatus.SUSPECTED or current_status == NodeStatus.HEALTHY:
                         self.node_status[node_id] = NodeStatus.FAILED
-                        logger.error(f"Node {node_id} has FAILED")
+                        logger.error(f"[FAULT] Node {node_id} has FAILED")
                         
-                        # Handle failure
                         file_map = await self._get_file_map()
-                        await self.recovery.handle_node_failure(node_id, file_map)
+                        asyncio.create_task(self.recovery.handle_node_failure(node_id, file_map))
+
+    async def _run_async_recovery(self, node_id: str):
+        """Asynchronous execution pipe for recovery to avoid blocking other systems"""
+        file_map = await self._get_file_map()
+        await self.recovery.handle_node_recovery(node_id, file_map)
+        
+        # Only mark HEALTHY after full sync completes safely
+        self.node_status[node_id] = NodeStatus.HEALTHY
+        logger.info(f"[FAULT] Node {node_id} fully synced and state is now HEALTHY")
     
     def _get_all_nodes(self) -> List[str]:
         """Get list of all nodes in cluster"""
-        from config import config
+        from shared.config import config
         return list(config.ALL_NODES.keys())
     
     async def _get_file_map(self) -> Dict[str, List[str]]:

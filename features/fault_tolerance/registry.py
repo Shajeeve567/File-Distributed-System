@@ -3,11 +3,11 @@ import asyncio
 import time
 from enum import Enum
 from typing import Dict, List, Optional
-from utils import logger
-from config import config
+from shared.utils import logger
+from shared.config import config
 
 class NodeStatus(Enum):
-    ACTIVE = "active"
+    HEALTHY = "healthy"
     SUSPECTED = "suspected"
     FAILED = "failed"
     RECOVERING = "recovering"
@@ -25,7 +25,7 @@ class NodeRegistry:
         
         # Initialize status for all nodes
         for node in config.ALL_NODES.keys():
-            self.node_status[node] = NodeStatus.ACTIVE if node == node_id else NodeStatus.ACTIVE
+            self.node_status[node] = NodeStatus.HEALTHY if node == node_id else NodeStatus.HEALTHY
     
     async def register_node(self, node_id: str):
         """Record that a node is alive"""
@@ -37,10 +37,10 @@ class NodeRegistry:
                 self.node_status[node_id] = NodeStatus.RECOVERING
                 logger.info(f"Node {node_id} is RECOVERING")
             elif self.node_status.get(node_id) == NodeStatus.SUSPECTED:
-                self.node_status[node_id] = NodeStatus.ACTIVE
-                logger.info(f"Node {node_id} is back to ACTIVE")
+                self.node_status[node_id] = NodeStatus.HEALTHY
+                logger.info(f"Node {node_id} is back to HEALTHY")
             else:
-                self.node_status[node_id] = NodeStatus.ACTIVE
+                self.node_status[node_id] = NodeStatus.HEALTHY
             
             logger.info(f"Node {node_id} registered. Live nodes: {list(self.live_nodes.keys())}")
     
@@ -61,7 +61,7 @@ class NodeRegistry:
     async def get_node_status(self, node_id: str) -> NodeStatus:
         """Get status of a specific node"""
         async with self.lock:
-            return self.node_status.get(node_id, NodeStatus.ACTIVE)
+            return self.node_status.get(node_id, NodeStatus.HEALTHY)
     
     async def mark_failed(self, node_id: str):
         """Manually mark a node as failed"""
@@ -85,6 +85,6 @@ class NodeRegistry:
         return len(live) > self.total_nodes // 2
     
     async def get_active_nodes(self) -> List[str]:
-        """Get all nodes that are ACTIVE"""
+        """Get all nodes that are HEALTHY"""
         async with self.lock:
-            return [n for n, s in self.node_status.items() if s == NodeStatus.ACTIVE]
+            return [n for n, s in self.node_status.items() if s == NodeStatus.HEALTHY]
