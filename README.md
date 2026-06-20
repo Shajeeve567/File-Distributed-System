@@ -10,16 +10,6 @@ It demonstrates the four fundamental distributed systems principles:
 
 Each node runs as an independent FastAPI service and communicates via REST APIs.
 
----
-
-# Team Members
-
-| Registration No | Name |
-|----------------|------|
-| IT24104152 | Gayuth Waidyaratne |
-| IT24410789 | Shaajeev Balarakshan |
-| IT24610797 | Rithish Kaanth |
-| IT24104317 | Naveen Jayawardane |
 
 ---
 
